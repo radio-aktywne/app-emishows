@@ -531,8 +531,9 @@ class ICalendarParser:
     def ical_to_calendar(self, calendar: icalendar.Calendar) -> m.Calendar:
         """Convert an icalendar.Calendar object to a Calendar object."""
         events = [
-            self.ical_to_event(cast("icalendar.Event", event))
+            self.ical_to_event(event)
             for event in calendar.walk(icalendar.Event.name)
+            if isinstance(event, icalendar.Event)
         ]
         return m.Calendar(events=events)
 

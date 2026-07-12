@@ -1,7 +1,6 @@
 import builtins
 from collections.abc import Generator, Sequence
 from contextlib import contextmanager
-from typing import cast
 from uuid import UUID
 
 from beaver.services.data.howlite import errors as he
@@ -94,7 +93,7 @@ class ShowsService:
         """Create show."""
         with self._handle_errors():
             show = await self._sapphire.show.create(
-                data=cast("st.ShowCreateInput", request.data), include=request.include
+                data=st.ShowCreateInput(**request.data), include=request.include
             )
 
         show = await self._map_show(show)
@@ -125,7 +124,7 @@ class ShowsService:
                     return m.UpdateResponse(show=None)
 
                 new = await transaction.show.update(
-                    data=cast("st.ShowUpdateInput", request.data),
+                    data=st.ShowUpdateInput(**request.data),
                     where=request.where,
                     include=request.include,
                 )

@@ -2,7 +2,6 @@ from collections.abc import Generator, Sequence
 from contextlib import contextmanager
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
-from typing import cast
 from uuid import UUID
 
 from beaver.services.data.howlite import errors as he
@@ -107,9 +106,7 @@ class EventsService:
                 skip=offset,
                 where=where,
                 include=include,
-                order=cast("list[st.EventOrderByInput]", list(order))
-                if isinstance(order, Sequence)
-                else cast("st.EventOrderByInput | None", order),
+                order=list(order) if isinstance(order, Sequence) else order,
             )
 
     async def _get_sapphire_event(
@@ -296,27 +293,6 @@ class EventsService:
 
         return hevent
 
-    async def _sort_events(
-        self,
-        events: Sequence[m.Event],
-        order: m.EventOrderByInput | Sequence[m.EventOrderByInput] | None,
-    ) -> Sequence[m.Event]:
-        if order is None:
-            return list(events)
-
-        if not isinstance(order, Sequence):
-            order = [order]
-
-        for item in reversed(order):
-            for key, direction in item.items():
-                events = sorted(
-                    events,
-                    key=lambda event: getattr(event, key),
-                    reverse=direction == "desc",
-                )
-
-        return list(events)
-
     def _list_event_instances(
         self, event: m.Event, start: datetime, end: datetime, *, exceptions: bool
     ) -> Sequence[im.Instance]:
@@ -444,9 +420,8 @@ class EventsService:
 
         events = [
             await self._merge_event(dsevent, dtevent)
-            for dsevent, dtevent in zip(sevents, hevents, strict=False)
+            for dsevent, dtevent in zip(sevents, hevents, strict=True)
         ]
-        events = await self._sort_events(events, order)
 
         return m.ListResponse(events=events)
 

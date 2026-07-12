@@ -1,5 +1,6 @@
-from gracy.exceptions import GracyException as ServiceError
+class ServiceError(Exception):
+    """Base class for howlite service errors."""
 
-__all__ = [
-    "ServiceError",
-]
+
+class NotFoundError(ServiceError):
+    """Raised when a resource is not found."""

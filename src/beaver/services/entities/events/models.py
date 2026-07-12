@@ -127,31 +127,8 @@ EventOrderByTypeInput = st._Event_type_OrderByInput  # noqa: SLF001
 EventOrderByShowIdInput = st._Event_showId_OrderByInput  # noqa: SLF001
 
 
-class EventOrderByStartInput(TypedDict, total=True):
-    """Order by start time."""
-
-    start: st.SortOrder
-
-
-class EventOrderByEndInput(TypedDict, total=True):
-    """Order by end time."""
-
-    end: st.SortOrder
-
-
-class EventOrderByTimezoneInput(TypedDict, total=True):
-    """Order by timezone."""
-
-    timezone: st.SortOrder
-
-
 type EventOrderByInput = (
-    EventOrderByIdInput
-    | EventOrderByTypeInput
-    | EventOrderByShowIdInput
-    | EventOrderByStartInput
-    | EventOrderByEndInput
-    | EventOrderByTimezoneInput
+    EventOrderByIdInput | EventOrderByTypeInput | EventOrderByShowIdInput
 )
 
 

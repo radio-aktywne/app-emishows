@@ -4,8 +4,8 @@ version = "0.19.0"
 classifiers = ["Private :: Do Not Upload"]
 requires-python = "~= 3.13.0"
 dependencies = [
-  # Helps building API clients
-  "gracy ~= 1.34.0",
+  # Async HTTP requests
+  "httpx ~= 0.28.0",
   # iCalendar handling
   "icalendar ~= 6.3.0",
   # Main API framework
@@ -32,8 +32,6 @@ dependencies = [
 dev = [
   # Template management
   "copier ~= 9.6.0",
-  # Async HTTP requests
-  "httpx ~= 0.28.0",
   # Testing framework
   "pytest ~= 9.0.0",
   # Asyncio support for pytest

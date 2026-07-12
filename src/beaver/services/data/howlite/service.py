@@ -1,145 +1,164 @@
-from collections.abc import Mapping, Sequence
-from typing import Any, cast
+from collections.abc import Mapping
+from http import HTTPMethod, HTTPStatus
+from typing import Any
 from xml.etree import ElementTree as ET
 
-from gracy import BaseEndpoint, GracefulRetry, Gracy, GracyConfig
-from httpx import BasicAuth, Response
+from httpx import AsyncClient, BasicAuth, HTTPError, HTTPStatusError, Response
 
-from beaver.config.models import HowliteConfig
+from beaver.config.models import HowliteCalDAVConfig, HowliteConfig
+from beaver.services.data.howlite import errors as e
 from beaver.services.data.howlite import models as m
 from beaver.services.data.howlite.queries import QueryBuilderFactory
 from beaver.services.icalendar.service import ICalendarService
 
 
-class Endpoint(BaseEndpoint):
-    """Endpoints for howlite API."""
+class HowliteClient:
+    """Client for howlite API."""
 
-    CALENDAR = "/"
-    EVENT = "/{EVENT}.ics"
+    def __init__(self, config: HowliteCalDAVConfig) -> None:
+        self.config = config
+
+    async def request(  # noqa: PLR0913
+        self,
+        method: str,
+        path: str,
+        *,
+        content: str | bytes | None = None,
+        data: Any | None = None,
+        params: Mapping[str, str] | None = None,
+        headers: Mapping[str, str] | None = None,
+    ) -> Response:
+        """Make a request and return the response."""
+        try:
+            async with AsyncClient(
+                auth=BasicAuth(
+                    username=self.config.user,
+                    password=self.config.password,
+                ),
+                base_url=self.config.url,
+            ) as client:
+                return await client.request(
+                    method,
+                    path,
+                    content=content,
+                    json=data,
+                    params=params,
+                    headers=headers,
+                )
+        except HTTPError as ex:
+            raise e.ServiceError from ex
 
 
-class BaseService(Gracy[Endpoint]):
-    """Base class for howlite database service."""
+class HowliteService:
+    """Service for howlite API."""
 
-    def __init__(self, config: HowliteConfig, *args: Any, **kwargs: Any) -> None:
-        self.Config.BASE_URL = config.caldav.url
-        self.Config.SETTINGS = GracyConfig(
-            retry=GracefulRetry(
-                delay=1,
-                max_attempts=3,
-                delay_modifier=2,
-            ),
-        )
-        super().__init__(*args, **kwargs)
-        self._config = config
-
-
-class HowliteService(BaseService):
-    """Service for howlite database."""
-
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
-        super().__init__(*args, **kwargs)
-        self._icalendar = ICalendarService()
-        self._query_builder_factory = QueryBuilderFactory()
-
-    def _build_auth(self) -> BasicAuth:
-        return BasicAuth(
-            username=self._config.caldav.user,
-            password=self._config.caldav.password,
-        )
-
-    def _build_query_payload(self, query: ET.Element) -> str:
-        return ET.tostring(query).decode("utf-8")
-
-    def _retrieve_calendars_data_from_query_response(
-        self, response: str, namespaces: Mapping[str, str]
-    ) -> Sequence[str]:
-        root = ET.fromstring(response)  # noqa: S314
-        calendars = root.findall(".//C:calendar-data", namespaces=dict(namespaces))
-        return [calendar.text for calendar in calendars if calendar.text is not None]
+    def __init__(self, config: HowliteConfig) -> None:
+        self.client = HowliteClient(config.caldav)
+        self.icalendar = ICalendarService()
+        self.query_builder_factory = QueryBuilderFactory()
 
     async def get_calendar(
         self, request: m.GetCalendarRequest
     ) -> m.GetCalendarResponse:
-        """Get a calendar."""
-        response = await self.get(
-            Endpoint.CALENDAR,
-            auth=self._build_auth(),
-        )
+        """Get calendar."""
+        response = await self.client.request(HTTPMethod.GET, "/")
 
-        calendar = self._icalendar.parser.string_to_calendar(response.text)
+        try:
+            response.raise_for_status()
+        except HTTPStatusError as ex:
+            if ex.response.status_code == HTTPStatus.NOT_FOUND:
+                raise e.NotFoundError from ex
+            raise e.ServiceError from ex
 
+        calendar = self.icalendar.parser.string_to_calendar(response.text)
         return m.GetCalendarResponse(calendar=calendar)
 
     async def get_event(self, request: m.GetEventRequest) -> m.GetEventResponse:
-        """Get an event."""
-        response = await self.get(
-            Endpoint.EVENT,
-            {"EVENT": str(request.id)},
-            auth=self._build_auth(),
-        )
+        """Get event."""
+        response = await self.client.request(HTTPMethod.GET, f"/{request.id}.ics")
 
-        calendar = self._icalendar.parser.string_to_calendar(response.text)
+        try:
+            response.raise_for_status()
+        except HTTPStatusError as ex:
+            if ex.response.status_code == HTTPStatus.NOT_FOUND:
+                raise e.NotFoundError from ex
+            raise e.ServiceError from ex
+
+        calendar = self.icalendar.parser.string_to_calendar(response.text)
         event = calendar.events[0]
-
         return m.GetEventResponse(event=event)
 
     async def query_events(
         self, request: m.QueryEventsRequest
     ) -> m.QueryEventsResponse:
         """Query events."""
-        builder = self._query_builder_factory.get(request.query)
-
-        namespaces = builder.namespaces
+        builder = self.query_builder_factory.get(request.query)
         query = builder.build()
-        payload = self._build_query_payload(query)
+        content = ET.tostring(query).decode("utf-8")
 
-        response = await self._request(
-            "REPORT",
-            Endpoint.CALENDAR,
-            auth=self._build_auth(),
-            content=payload,
-            headers={"Content-Type": "application/xml"},
-        )
-        response = cast("Response", response)
-
-        data = self._retrieve_calendars_data_from_query_response(
-            response.text, namespaces
+        response = await self.client.request(
+            "REPORT", "/", content=content, headers={"Content-Type": "application/xml"}
         )
 
-        calendars = [self._icalendar.parser.string_to_calendar(d) for d in data]
+        try:
+            response.raise_for_status()
+        except HTTPStatusError as ex:
+            raise e.ServiceError from ex
+
+        root = ET.fromstring(response.text)  # noqa: S314
+        calendars = root.findall(
+            ".//C:calendar-data", namespaces=dict(builder.namespaces)
+        )
+        data = [calendar.text for calendar in calendars if calendar.text is not None]
+        calendars = [self.icalendar.parser.string_to_calendar(d) for d in data]
         events = [event for calendar in calendars for event in calendar.events]
-
         return m.QueryEventsResponse(events=events)
 
     async def upsert_event(
         self, request: m.UpsertEventRequest
     ) -> m.UpsertEventResponse:
-        """Upsert an event."""
+        """Upsert event."""
         calendar = m.Calendar(events=[request.event])
-        payload = self._icalendar.parser.calendar_to_string(calendar)
+        content = self.icalendar.parser.calendar_to_string(calendar)
 
-        await self.put(
-            Endpoint.EVENT,
-            {"EVENT": str(request.event.id)},
-            auth=self._build_auth(),
-            content=payload,
+        response = await self.client.request(
+            HTTPMethod.PUT,
+            f"/{request.event.id}.ics",
+            content=content,
             headers={"Content-Type": "text/calendar"},
         )
 
-        get_event_request = m.GetEventRequest(id=request.event.id)
-        get_event_response = await self.get_event(get_event_request)
+        try:
+            response.raise_for_status()
+        except HTTPStatusError as ex:
+            if ex.response.status_code == HTTPStatus.NOT_FOUND:
+                raise e.NotFoundError from ex
+            raise e.ServiceError from ex
 
-        return m.UpsertEventResponse(event=get_event_response.event)
+        response = await self.client.request(HTTPMethod.GET, f"/{request.event.id}.ics")
+
+        try:
+            response.raise_for_status()
+        except HTTPStatusError as ex:
+            if ex.response.status_code == HTTPStatus.NOT_FOUND:
+                raise e.NotFoundError from ex
+            raise e.ServiceError from ex
+
+        calendar = self.icalendar.parser.string_to_calendar(response.text)
+        event = calendar.events[0]
+        return m.UpsertEventResponse(event=event)
 
     async def delete_event(
         self, request: m.DeleteEventRequest
     ) -> m.DeleteEventResponse:
-        """Delete an event."""
-        await self.delete(
-            Endpoint.EVENT,
-            {"EVENT": str(request.id)},
-            auth=self._build_auth(),
-        )
+        """Delete event."""
+        response = await self.client.request(HTTPMethod.DELETE, f"/{request.id}.ics")
+
+        try:
+            response.raise_for_status()
+        except HTTPStatusError as ex:
+            if ex.response.status_code == HTTPStatus.NOT_FOUND:
+                raise e.NotFoundError from ex
+            raise e.ServiceError from ex
 
         return m.DeleteEventResponse()

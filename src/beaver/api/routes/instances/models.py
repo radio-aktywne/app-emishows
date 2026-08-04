@@ -334,7 +334,7 @@ type GetRequestStart = NaiveDatetime
 
 type GetRequestInclude = im.InstanceInclude | None
 
-type GetResponseInstance = Instance | None
+type GetResponseInstance = Instance
 
 type CreateRequestData = InstanceCreateInput
 
